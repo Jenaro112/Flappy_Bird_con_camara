@@ -95,7 +95,7 @@ EMOJIS = {
 }
 
 # ── FOTO AL COSTADO ─────────────────────────────────────────────────
-def overlay_foto_lado(frame, nombre_base, max_w=350, max_h=350):
+def overlay_foto_lado(frame, nombre_base, max_w=550, max_h=550):
     for ext in [".jpg", ".png", ".jpeg"]:
         for prefijo in ["assets/", ""]:
             ruta = prefijo + nombre_base + ext
@@ -240,16 +240,8 @@ while cap.isOpened():
                 image[y0:y0+eh, x0:x0+ew, c] * (1 - alpha) + emoji_img[:, :, c] * alpha
             )
 
-        # Texto grande al lado del emoji
-        cv2.putText(image, label, (150, 100), cv2.FONT_HERSHEY_SIMPLEX,
-                    2.0, color, 4, cv2.LINE_AA)
-
-        # Foto centrada si existe
         if overlay_foto_lado(image, info["foto"]):
-            pass  # ya se superpuso
-        else:
-            cv2.putText(image, f"Falta {info['foto']}.jpg", (150, 150),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            pass
 
     else:
         cv2.putText(image, "Esperando gesto...", (20, 30),
@@ -264,3 +256,5 @@ if hasattr(hands, 'close'):
     hands.close()
 cap.release()
 cv2.destroyAllWindows()
+
+

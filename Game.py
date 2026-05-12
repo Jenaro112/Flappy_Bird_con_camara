@@ -1,408 +1,418 @@
 import pygame
-import sys
 import cv2
-import math
-import os
 import mediapipe as mp
+import sys
+import math
+import random
+import os
+import json
+import time
 
-# ===========================================================================
-# DETECCIÓN AUTOMÁTICA DE VERSIÓN DE MEDIAPIPE
-# - Versión antigua (< 0.10): usa mp.solutions.hands
-# - Versión nueva  (>= 0.10): usa mediapipe.tasks + modelo .task descargable
-# ===========================================================================
 MEDIAPIPE_NUEVO = not hasattr(mp, "solutions")
 
 if MEDIAPIPE_NUEVO:
+    import urllib.request
     from mediapipe.tasks import python as mp_tasks
     from mediapipe.tasks.python import vision as mp_vision
-    from mediapipe.tasks.python.vision import HandLandmarkerOptions, RunningMode
-    import urllib.request
+    from mediapipe.tasks.python.vision import FaceLandmarkerOptions, RunningMode
 
-    MODEL_PATH = "hand_landmarker.task"
-    MODEL_URL  = (
+    MODEL_PATH = "face_landmarker.task"
+    MODEL_URL = (
         "https://storage.googleapis.com/mediapipe-models/"
-        "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+        "face_landmarker/face_landmarker/float16/1/face_landmarker.task"
     )
     if not os.path.exists(MODEL_PATH):
-        print("Descargando modelo MediaPipe (solo la primera vez)...")
+        print("Descargando modelo Face Landmarker...")
         try:
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-            print("Modelo descargado OK.")
+            print("OK")
         except Exception as e:
-            print(f"\nERROR al descargar el modelo: {e}")
-            print("Descargalo manualmente desde:")
-            print(MODEL_URL)
-            print(f"Guardalo como '{MODEL_PATH}' en la carpeta del juego.")
+            print(f"Error: {e}")
             sys.exit(1)
 
-    _opts = HandLandmarkerOptions(
+    face_opts = FaceLandmarkerOptions(
         base_options=mp_tasks.BaseOptions(model_asset_path=MODEL_PATH),
-        running_mode=RunningMode.VIDEO,
-        num_hands=1,
-        min_hand_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
+        running_mode=RunningMode.VIDEO, num_faces=1
     )
-    hands  = mp_vision.HandLandmarker.create_from_options(_opts)
+    face_mesh = mp_vision.FaceLandmarker.create_from_options(face_opts)
     _ts_mp = 0
-
 else:
-    hands = mp.solutions.hands.Hands(
-        max_num_hands=1,
-        min_detection_confidence=0.7,
-        min_tracking_confidence=0.7,
-    )
+    mp_face_mesh = mp.solutions.face_mesh
+    face_mesh = mp_face_mesh.FaceMesh(refine_landmarks=True)
 
-# Estas constantes las necesitamos ANTES de procesar frames
-ANCHO, ALTO = 1280, 720
-
-def procesar_frame_mp(frame_rgb):
-    global _ts_mp
-    if MEDIAPIPE_NUEVO:
-        _ts_mp += 33
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-        results = hands.detect_for_video(mp_image, _ts_mp)
-        if results.hand_landmarks:
-            lm = results.hand_landmarks[0][8]
-            return int(lm.x * ANCHO), int(lm.y * ALTO), results.hand_landmarks[0]
-    else:
-        res = hands.process(frame_rgb)
-        if res.multi_hand_landmarks:
-            lm = res.multi_hand_landmarks[0].landmark[8]
-            return int(lm.x * ANCHO), int(lm.y * ALTO), res.multi_hand_landmarks[0].landmark
-    return 0, 0, None
-
-# ===========================================================================
-# PYGAME
-# ===========================================================================
+# ── PYGAME ──────────────────────────────────────────────────────────
 pygame.init()
-pantalla      = pygame.display.set_mode((ANCHO, ALTO))
-pygame.display.set_caption("Penales en La Bombonera")
-reloj         = pygame.time.Clock()
-fuente_grande = pygame.font.SysFont("Arial", 72, bold=True)
-fuente_media  = pygame.font.SysFont("Arial", 40, bold=True)
-fuente_chica  = pygame.font.SysFont("Arial", 28)
+ANCHO, ALTO = 1280, 720
+pantalla = pygame.display.set_mode((ANCHO, ALTO))
+pygame.display.set_caption("Flappy Bird - Control con la Nariz")
+reloj = pygame.time.Clock()
+fuente_info = pygame.font.SysFont("Arial", 28)
 
-BLANCO   = (255, 255, 255)
-NEGRO    = (0,   0,   0)
-ROJO     = (220, 30,  30)
-AMARILLO = (255, 215, 0)
-VERDE    = (34,  139, 34)
+BLANCO  = (255, 255, 255)
+NEGRO   = (0, 0, 0)
+CREMA   = (245, 230, 200)
 
-# ===========================================================================
-# ASSETS CON FALLBACK
-# ===========================================================================
-def cargar_imagen(path, tamaño, alpha=False):
-    try:
-        img = pygame.image.load(path)
-        img = img.convert_alpha() if alpha else img.convert()
-        return pygame.transform.scale(img, tamaño), True
-    except Exception:
-        surf = pygame.Surface(tamaño, pygame.SRCALPHA if alpha else 0)
-        surf.fill((45, 110, 45))
-        return surf, False
-
-img_fondo,  _          = cargar_imagen("assets/La_12.png",  (ANCHO, ALTO))
-img_pelota, pelota_png = cargar_imagen("assets/pelota2.png", (60, 60), alpha=True)
-
-def dibujar_pelota_fallback(sup, x, y, radio=30):
-    pygame.draw.circle(sup, BLANCO, (int(x), int(y)), radio)
-    pygame.draw.circle(sup, NEGRO,  (int(x), int(y)), radio, 3)
-    for ang in range(0, 360, 60):
-        r = math.radians(ang)
-        pygame.draw.circle(sup, NEGRO,
-                           (int(x + math.cos(r)*radio*0.55),
-                            int(y + math.sin(r)*radio*0.55)), 6)
-
-# ===========================================================================
-# ARCO
-# ===========================================================================
-ARCO_X     = 291
-ARCO_Y     = 298
-ARCO_ANCHO = 698
-ARCO_ALTO  = 269
-PENAL_Y    = ALTO - 140
-
-def pelota_en_arco(px, py):
-    return pygame.Rect(ARCO_X, ARCO_Y, ARCO_ANCHO, ARCO_ALTO).collidepoint(int(px), int(py))
-
-def dibujar_arco(sup):
-    g = 5
-    pygame.draw.line(sup, BLANCO, (ARCO_X, ARCO_Y), (ARCO_X, ARCO_Y + ARCO_ALTO), g)
-    pygame.draw.line(sup, BLANCO, (ARCO_X + ARCO_ANCHO, ARCO_Y), (ARCO_X + ARCO_ANCHO, ARCO_Y + ARCO_ALTO), g)
-    pygame.draw.line(sup, BLANCO, (ARCO_X, ARCO_Y), (ARCO_X + ARCO_ANCHO, ARCO_Y), g)
-
-# ===========================================================================
-# PORTERO
-# ===========================================================================
-class Portero:
-    def __init__(self):
-        self.x      = ANCHO // 2
-        self.y      = ARCO_Y + ARCO_ALTO // 2
-        self.vel    = 5
-        self.dir    = 1
-        self.activo = False
-
-    def mover(self):
-        if not self.activo:
-            return
-        self.x += self.vel * self.dir
-        if self.x >= ARCO_X + ARCO_ANCHO - 30 or self.x <= ARCO_X + 30:
-            self.dir *= -1
-
-    def ataja(self, px, py):
-        rect = pygame.Rect(int(self.x - 25), int(self.y - 45), 50, 90)
-        return rect.inflate(20, 20).collidepoint(int(px), int(py))
-
-    def dibujar(self, sup):
-        rx, ry = int(self.x - 25), int(self.y - 45)
-        pygame.draw.rect(sup, AMARILLO, (rx, ry, 50, 90), border_radius=8)
-        pygame.draw.circle(sup, (255, 200, 150), (int(self.x), ry - 18), 18)
-        txt = fuente_chica.render("1", True, NEGRO)
-        sup.blit(txt, txt.get_rect(center=(int(self.x), int(self.y))))
-
-# ===========================================================================
-# ESTADO DEL JUEGO
-# ===========================================================================
-ESPERANDO = "esperando"
-VOLANDO   = "volando"
-RESULTADO = "resultado"
-
-def reset_pelota():
-    return float(ANCHO // 2), float(PENAL_Y), 0.0, 0.0
-
-pelota_x, pelota_y, vel_x, vel_y = reset_pelota()
-radio = 30
-
-goles = atajadas = afuera = penal_actual = 0
-PENALES_MAX     = 5
-estado          = ESPERANDO
-portero         = Portero()
-mensaje         = ""
-color_msj       = AMARILLO
-timer_msj       = 0
-juego_terminado = False
-dedo_x_ant = dedo_y_ant = 0
-
-# ===========================================================================
-# CÁMARA
-# ===========================================================================
+# ── CÁMARA ──────────────────────────────────────────────────────────
 camara = None
 for idx in [0, 1, 2]:
-    cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION if hasattr(cv2, "CAP_AVFOUNDATION") else 0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, ANCHO)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, ALTO)
     if cap.isOpened():
         for _ in range(5):
             cap.read()
         ok, frame_prueba = cap.read()
         if ok and frame_prueba is not None and frame_prueba.any():
             camara = cap
-            print(f"Cámara encontrada en índice {idx}")
+            print(f"Cámara en índice {idx}")
             break
         cap.release()
 
 if camara is None:
-    print("ERROR: No se encontró ninguna cámara.")
-    pygame.quit()
-    sys.exit()
+    print("ERROR: No hay cámara.")
+    sys.exit(1)
 
-# ===========================================================================
-# FUNCIONES HUD
-# ===========================================================================
+# ── TEXTURAS ────────────────────────────────────────────────────────
+def cargar_img(ruta, escala=None):
+    try:
+        img = pygame.image.load(ruta).convert_alpha()
+        if escala:
+            img = pygame.transform.scale(img, escala)
+        return img
+    except:
+        return None
+
+# Tuberías
+pipe_src = cargar_img("assets/pipe-green.png")
+if pipe_src:
+    ESCALA_PIPE = 2.0
+    pipe_src = pygame.transform.scale(pipe_src, (int(pipe_src.get_width() * ESCALA_PIPE), int(pipe_src.get_height() * ESCALA_PIPE)))
+    PIPE_ANCHO = pipe_src.get_width()
+    PIPE_ALTO  = pipe_src.get_height()
+    CAP_ALTO = int(PIPE_ALTO * 0.12)
+    pipe_cap = pipe_src.subsurface(0, 0, PIPE_ANCHO, CAP_ALTO)
+    pipe_body = pipe_src.subsurface(0, CAP_ALTO, PIPE_ANCHO, PIPE_ALTO - CAP_ALTO)
+    pipe_cap_inv = pygame.transform.flip(pipe_cap, False, True)
+    pipe_body_inv = pygame.transform.flip(pipe_body, False, True)
+else:
+    PIPE_ANCHO, PIPE_ALTO = 90, 320
+    CAP_ALTO = 30
+    pipe_cap = pipe_body = None
+
+# Pájaro (3 flaps)
+bird_up   = cargar_img("assets/yellowbird-upflap.png")
+bird_mid  = cargar_img("assets/yellowbird-midflap.png")
+bird_down = cargar_img("assets/yellowbird-downflap.png")
+bird_ok   = all(x is not None for x in [bird_up, bird_mid, bird_down])
+if bird_ok:
+    ESCALA_PAJARO = 2.2
+    bird_up   = pygame.transform.scale(bird_up,   (int(bird_up.get_width() * ESCALA_PAJARO), int(bird_up.get_height() * ESCALA_PAJARO)))
+    bird_mid  = pygame.transform.scale(bird_mid,  (int(bird_mid.get_width() * ESCALA_PAJARO), int(bird_mid.get_height() * ESCALA_PAJARO)))
+    bird_down = pygame.transform.scale(bird_down, (int(bird_down.get_width() * ESCALA_PAJARO), int(bird_down.get_height() * ESCALA_PAJARO)))
+    BIRD_W = bird_up.get_width()
+    BIRD_H = bird_up.get_height()
+    BIRD_RADIO = max(BIRD_W, BIRD_H) // 2
+else:
+    BIRD_W = BIRD_H = 36
+    BIRD_RADIO = 18
+
+# Base / suelo
+base_img = cargar_img("assets/base.png")
+if base_img:
+    BASE_ALTO = base_img.get_height()
+else:
+    BASE_ALTO = 80
+
+# Números (0.png – 9.png)
+nums = []
+nums_ok = True
+for i in range(10):
+    n = cargar_img(f"assets/{i}.png")
+    if n is None:
+        nums_ok = False
+        break
+    nums.append(n)
+if not nums_ok:
+    nums = []
+
+# ── CONSTANTES ──────────────────────────────────────────────────────
+GAP_ALTO          = 215
+GAP_ALTO_MIN      = 145
+PIPE_VEL_INICIAL  = 5
+PIPE_INTERVALO_MS = 1600
+PIPE_INTERVALO_MIN = 1000
+BIRD_X            = 250
+SUAVIDAD          = 0.3
+SUELO_Y           = ALTO - BASE_ALTO
+
+# ── ESTADO ─────────────────────────────────────────────────────────
+def cargar_high_score():
+    try:
+        with open("high_score.json") as f:
+            return json.load(f).get("high_score", 0)
+    except:
+        return 0
+
+def guardar_high_score(valor):
+    with open("high_score.json", "w") as f:
+        json.dump({"high_score": valor}, f)
+
+pajarito_y    = ALTO // 2
+pajarito_flap = "mid"
+score         = 0
+high_score    = cargar_high_score()
+tiempo_inicio = 0
+vel_pipes     = PIPE_VEL_INICIAL
+gap_actual    = GAP_ALTO
+pipes         = []
+ultimo_pipe_ms = 0
+ultimo_speedup = 0
+estado        = "menu"
+nose_y_norm   = 0.5
+cam_surf      = None
+
+# ── TUBERÍAS ───────────────────────────────────────────────────────
+def generar_pipe():
+    min_h = 80
+    max_h = SUELO_Y - gap_actual - 80
+    th = random.randint(min_h, max_h)
+    gap = gap_actual
+    pipe = {"x": ANCHO, "top_h": th, "gap": gap, "paso": False}
+
+    if pipe_cap:
+        gap_y = th + gap
+        bot_h = SUELO_Y - gap_y
+
+        top = pygame.Surface((PIPE_ANCHO, th), pygame.SRCALPHA)
+        top.blit(pipe_cap_inv, (0, th - CAP_ALTO))
+        if th > CAP_ALTO:
+            top.blit(pygame.transform.scale(pipe_body_inv, (PIPE_ANCHO, th - CAP_ALTO)), (0, 0))
+        pipe["top_img"] = top
+
+        bot = pygame.Surface((PIPE_ANCHO, bot_h), pygame.SRCALPHA)
+        bot.blit(pipe_cap, (0, 0))
+        if bot_h > CAP_ALTO:
+            bot.blit(pygame.transform.scale(pipe_body, (PIPE_ANCHO, bot_h - CAP_ALTO)), (0, CAP_ALTO))
+        pipe["bot_img"] = bot
+
+    return pipe
+
+def dibujar_pipe(sup, pipe):
+    if "top_img" in pipe:
+        sup.blit(pipe["top_img"], (pipe["x"], 0))
+        sup.blit(pipe["bot_img"], (pipe["x"], pipe["top_h"] + pipe["gap"]))
+    else:
+        th = pipe["top_h"]
+        gap_y = th + pipe["gap"]
+        pygame.draw.rect(sup, (34, 139, 34), (pipe["x"], 0, PIPE_ANCHO, th))
+        pygame.draw.rect(sup, (20, 100, 20), (pipe["x"] - 4, th - 30, PIPE_ANCHO + 8, 30))
+        pygame.draw.rect(sup, (34, 139, 34), (pipe["x"], gap_y, PIPE_ANCHO, SUELO_Y - gap_y))
+        pygame.draw.rect(sup, (20, 100, 20), (pipe["x"] - 4, gap_y, PIPE_ANCHO + 8, 30))
+
+# ── PAJARITO ───────────────────────────────────────────────────────
+def dibujar_pajarito(sup, x, y, flap):
+    if bird_ok:
+        imgs = {"up": bird_up, "mid": bird_mid, "down": bird_down}
+        img = imgs.get(flap, bird_mid)
+        sup.blit(img, img.get_rect(center=(x, y)))
+    else:
+        dx = 6
+        dy = -4
+        pygame.draw.circle(sup, (255, 215, 0), (x, y), BIRD_RADIO)
+        pygame.draw.circle(sup, NEGRO, (x, y), BIRD_RADIO, 2)
+        pygame.draw.circle(sup, NEGRO, (x + dx, y + dy), 4)
+        pygame.draw.circle(sup, BLANCO, (x + dx, y + dy), 2)
+        pygame.draw.polygon(sup, (255, 140, 0), [
+            (x + BIRD_RADIO, y), (x + BIRD_RADIO + 14, y - 2), (x + BIRD_RADIO + 14, y + 6)
+        ])
+
+# ── HUD ────────────────────────────────────────────────────────────
 def dibujar_hud(sup):
-    partes = [
-        (f"Goles: {goles}", AMARILLO),
-        (" | ", (80, 80, 80)),
-        (f"Atajadas: {atajadas}", ROJO),
-        (" | ", (80, 80, 80)),
-        (f"Afuera: {afuera}", (180, 180, 180)),
-        (" | ", (80, 80, 80)),
-        (f"Penal: {penal_actual}/{PENALES_MAX}", BLANCO),
-    ]
-    ancho = sum(fuente_chica.render(t, True, c).get_width() for t, c in partes)
-    alto = fuente_chica.render("A", True, BLANCO).get_height()
-    bx = ANCHO - ancho - 24
-    by = 10
-    bg = pygame.Surface((ancho + 24, alto + 12), pygame.SRCALPHA)
-    bg.fill((0, 0, 0, 160))
-    sup.blit(bg, (bx, by))
-    x = bx + 12
-    for texto, color in partes:
-        txt = fuente_chica.render(texto, True, color)
-        sup.blit(txt, (x, by + 6))
-        x += txt.get_width()
+    segundos = max(0, int(time.time() - tiempo_inicio))
+    fuente_s = pygame.font.SysFont("impact", 58)
+    fuente_m = pygame.font.SysFont("impact", 32)
+    fuente_p = pygame.font.SysFont("comicsansms", 22)
 
-def dibujar_mensaje_central(sup, texto, color):
-    sombra = fuente_grande.render(texto, True, NEGRO)
-    txt    = fuente_grande.render(texto, True, color)
-    cx, cy = ANCHO // 2, ALTO // 2
-    sup.blit(sombra, sombra.get_rect(center=(cx+3, cy+3)))
-    sup.blit(txt,    txt.get_rect(center=(cx, cy)))
+    if nums:
+        digitos = [int(d) for d in str(score)]
+        ancho_total = sum(nums[d].get_width() for d in digitos)
+        x = (ANCHO - ancho_total) // 2
+        for d in digitos:
+            sup.blit(nums[d], (x, 14))
+            x += nums[d].get_width()
+    else:
+        txt = fuente_s.render(str(score), True, BLANCO)
+        sombra = fuente_s.render(str(score), True, NEGRO)
+        sup.blit(sombra, (ANCHO // 2 - sombra.get_width() // 2 + 3, 17))
+        sup.blit(txt, (ANCHO // 2 - txt.get_width() // 2, 14))
 
-def dibujar_pantalla_final(sup):
-    over = pygame.Surface((ANCHO, ALTO), pygame.SRCALPHA)
-    over.fill((0, 0, 0, 180))
-    sup.blit(over, (0, 0))
-    lineas = [
-        ("FINAL!",                                  AMARILLO, fuente_grande),
-        (f"Goles: {goles} / {PENALES_MAX}",         BLANCO,   fuente_media),
-        (f"Atajadas: {atajadas}   Afuera: {afuera}", BLANCO,   fuente_media),
-        ("Presiona R para jugar de nuevo",           BLANCO,   fuente_chica),
-    ]
-    y = ALTO // 2 - 130
-    for texto, color, fuente in lineas:
-        s = fuente.render(texto, True, color)
-        sup.blit(s, s.get_rect(center=(ANCHO // 2, y)))
-        y += s.get_height() + 20
+    bg = pygame.Surface((240, 100), pygame.SRCALPHA)
+    bg.fill((0, 0, 0, 130))
+    sup.blit(bg, (12, 12))
 
-def dibujar_ayuda(sup):
-    if estado == ESPERANDO and not juego_terminado:
-        txt = fuente_chica.render(
-            "Acerca tu dedo indice a la pelota y movelo hacia el arco", True, BLANCO)
-        fondo = pygame.Surface((txt.get_width()+20, txt.get_height()+8), pygame.SRCALPHA)
-        fondo.fill((0, 0, 0, 120))
-        sup.blit(fondo, (ANCHO//2 - txt.get_width()//2 - 10, ALTO - 50))
-        sup.blit(txt, txt.get_rect(center=(ANCHO//2, ALTO - 42)))
+    r1 = fuente_m.render(f"SCORE: {score}", True, BLANCO)
+    r2 = fuente_m.render(f"BEST: {high_score}", True, (255, 215, 0))
+    r3 = fuente_p.render(f"{segundos}s", True, (200, 200, 200))
+    sup.blit(r1, (20, 14))
+    sup.blit(r2, (20, 44))
+    sup.blit(r3, (20, 72))
 
-# ===========================================================================
-# BUCLE PRINCIPAL
-# ===========================================================================
-corriendo = True
+# ── REINICIO ───────────────────────────────────────────────────────
+def reiniciar():
+    global pajarito_y, pajarito_flap, score, tiempo_inicio, vel_pipes
+    global pipes, ultimo_pipe_ms, estado, gap_actual, high_score
+    if score > high_score:
+        high_score = score
+        guardar_high_score(high_score)
+    pajarito_y = ALTO // 2
+    pajarito_flap = "mid"
+    score = 0
+    tiempo_inicio = time.time()
+    vel_pipes = PIPE_VEL_INICIAL
+    gap_actual = GAP_ALTO
+    pipes.clear()
+    pipes.append(generar_pipe())
+    ultimo_pipe_ms = pygame.time.get_ticks()
+    estado = "jugando"
 
-while corriendo:
+# ── BUCLE PRINCIPAL ────────────────────────────────────────────────
+while True:
+    dt = reloj.tick(60)
+    ahora_ms = pygame.time.get_ticks()
+
     for evento in pygame.event.get():
         if evento.type == pygame.QUIT:
-            corriendo = False
+            camara.release()
+            if hasattr(face_mesh, 'close'): face_mesh.close()
+            pygame.quit()
+            sys.exit()
         if evento.type == pygame.KEYDOWN:
             if evento.key == pygame.K_ESCAPE:
-                corriendo = False
-            if evento.key == pygame.K_r and juego_terminado:
-                goles = atajadas = afuera = penal_actual = 0
-                pelota_x, pelota_y, vel_x, vel_y = reset_pelota()
-                estado = ESPERANDO
-                portero = Portero()
-                juego_terminado = False
+                camara.release()
+                if hasattr(face_mesh, 'close'): face_mesh.close()
+                pygame.quit()
+                sys.exit()
+            if estado == "menu":
+                reiniciar()
+            if evento.key == pygame.K_r and estado == "game_over":
+                reiniciar()
 
-    # ── CÁMARA ──────────────────────────────────────────────────────────────
+    # ── CÁMARA + FACE MESH ─────────────────────────────────────────
     exito, frame = camara.read()
-    dedo_x, dedo_y = 0, 0
-    landmarks = None
-    cam_surf = None
-
     if exito:
-        frame     = cv2.flip(frame, 1)
+        frame = cv2.flip(frame, 1)
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        dedo_x, dedo_y, landmarks = procesar_frame_mp(frame_rgb)
 
-        frame_mostrar = cv2.resize(frame_rgb, (320, 240))
-        if landmarks:
-            for lm in landmarks:
-                cx, cy = int(lm.x * 320), int(lm.y * 240)
-                cv2.circle(frame_mostrar, (cx, cy), 2, (0, 255, 0), -1)
-            lm_tip = landmarks[8]
-            cx, cy = int(lm_tip.x * 320), int(lm_tip.y * 240)
-            cv2.circle(frame_mostrar, (cx, cy), 6, (255, 0, 0), -1)
-        cam_surf = pygame.surfarray.make_surface(frame_mostrar.swapaxes(0, 1))
+        if MEDIAPIPE_NUEVO:
+            _ts_mp += 33
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+            rf = face_mesh.detect_for_video(mp_image, _ts_mp)
+            if rf.face_landmarks:
+                nose_y_norm = rf.face_landmarks[0][1].y
+        else:
+            rf = face_mesh.process(frame_rgb)
+            if rf.multi_face_landmarks:
+                nose_y_norm = rf.multi_face_landmarks[0].landmark[1].y
 
-    # ── LÓGICA ──────────────────────────────────────────────────────────────
-    if not juego_terminado:
-        if estado == ESPERANDO and dedo_x != 0:
-            dist = math.hypot(dedo_x - pelota_x, dedo_y - pelota_y)
-            if dist <= 120:
-                vx = (dedo_x - dedo_x_ant) * 0.9
-                vy = (dedo_y - dedo_y_ant) * 0.9
-                if math.hypot(vx, vy) > 5:
-                    vel_x, vel_y   = vx, vy
-                    estado         = VOLANDO
-                    portero.activo = True
-                    penal_actual  += 1
+        frame_fondo = cv2.resize(frame_rgb, (ANCHO, ALTO))
+        cam_surf = pygame.surfarray.make_surface(frame_fondo.swapaxes(0, 1))
 
-        elif estado == VOLANDO:
-            pelota_x += vel_x
-            pelota_y += vel_y
-            vel_x *= 0.97
-            vel_y *= 0.97
-            portero.mover()
+    # ── LÓGICA ──────────────────────────────────────────────────────
+    if estado == "jugando":
+        target_y = nose_y_norm * ALTO
+        diff = target_y - pajarito_y
+        pajarito_y = pajarito_y + diff * SUAVIDAD
 
-            resultado = None
-            if portero.ataja(pelota_x, pelota_y):
-                resultado = "atajada"
-            elif pelota_y < ARCO_Y - 30 or pelota_x < 0 or pelota_x > ANCHO:
-                resultado = "afuera"
-            elif pelota_en_arco(pelota_x, pelota_y):
-                resultado = "gol"
+        if diff < -3:
+            pajarito_flap = "up"
+        elif diff > 3:
+            pajarito_flap = "down"
+        else:
+            pajarito_flap = "mid"
 
-            if resultado:
-                estado    = RESULTADO
-                timer_msj = 120
-                if resultado == "gol":
-                    goles    += 1
-                    mensaje   = "GOL!"
-                    color_msj = AMARILLO
-                elif resultado == "atajada":
-                    atajadas += 1
-                    mensaje   = "ATAJADA!"
-                    color_msj = ROJO
-                else:
-                    afuera   += 1
-                    mensaje   = "AFUERA!"
-                    color_msj = BLANCO
-                if penal_actual >= PENALES_MAX:
-                    juego_terminado = True
+        segundos = max(0, int(time.time() - tiempo_inicio))
+        vel_pipes = PIPE_VEL_INICIAL + (segundos // 8) * 2
+        gap_actual = max(GAP_ALTO_MIN, GAP_ALTO - (segundos // 10) * 20)
+        if score >= 50:
+            vel_pipes += 4
+            gap_actual = max(120, gap_actual - 30)
 
-        elif estado == RESULTADO:
-            timer_msj -= 1
-            if timer_msj <= 0:
-                pelota_x, pelota_y, vel_x, vel_y = reset_pelota()
-                estado         = ESPERANDO
-                portero.activo = False
+        intervalo = max(PIPE_INTERVALO_MIN, PIPE_INTERVALO_MS - (segundos // 10) * 100)
+        if score >= 50:
+            intervalo = max(700, intervalo - 200)
 
-    if dedo_x != 0:
-        dedo_x_ant, dedo_y_ant = dedo_x, dedo_y
+        if ahora_ms - ultimo_pipe_ms > intervalo:
+            pipes.append(generar_pipe())
+            ultimo_pipe_ms = ahora_ms
 
-    # ── RENDER ──────────────────────────────────────────────────────────────
-    pantalla.blit(img_fondo, (0, 0))
+        nuevas = []
+        for pipe in pipes:
+            pipe["x"] -= vel_pipes
+
+            if pipe["x"] + PIPE_ANCHO < 0:
+                continue
+
+            if not pipe["paso"] and pipe["x"] + PIPE_ANCHO < BIRD_X:
+                pipe["paso"] = True
+                score += 1
+
+            if (BIRD_X + BIRD_RADIO > pipe["x"] and
+                BIRD_X - BIRD_RADIO < pipe["x"] + PIPE_ANCHO):
+                if (pajarito_y - BIRD_RADIO < pipe["top_h"] or
+                    pajarito_y + BIRD_RADIO > pipe["top_h"] + pipe["gap"]):
+                    estado = "game_over"
+                    if score > high_score:
+                        high_score = score
+                        guardar_high_score(high_score)
+
+            nuevas.append(pipe)
+
+        if pajarito_y - BIRD_RADIO < 0 or pajarito_y + BIRD_RADIO > SUELO_Y:
+            estado = "game_over"
+            if score > high_score:
+                high_score = score
+                guardar_high_score(high_score)
+
+        pipes = nuevas
+
+    # ── RENDER ──────────────────────────────────────────────────────
     if cam_surf:
         pantalla.blit(cam_surf, (0, 0))
-    dibujar_arco(pantalla)
-
-    if not juego_terminado:
-        portero.dibujar(pantalla)
-
-    # Pelota con perspectiva
-    if estado == VOLANDO:
-        prog   = max(0.0, min(1.0, (PENAL_Y - pelota_y) / max(1, PENAL_Y - ARCO_Y)))
-        escala = 1.0 - prog * 0.55
-        tam    = max(10, int(60 * escala))
     else:
-        tam = 60
+        pantalla.fill((50, 50, 80))
 
-    if pelota_png:
-        ps = pygame.transform.scale(img_pelota, (tam, tam))
-        pantalla.blit(ps, ps.get_rect(center=(int(pelota_x), int(pelota_y))))
+    if base_img:
+        pantalla.blit(pygame.transform.scale(base_img, (ANCHO, BASE_ALTO)), (0, SUELO_Y))
     else:
-        dibujar_pelota_fallback(pantalla, pelota_x, pelota_y, tam // 2)
+        pygame.draw.rect(pantalla, (100, 180, 50), (0, SUELO_Y, ANCHO, BASE_ALTO))
 
-    if dedo_x != 0 and dedo_y != 0:
-        pygame.draw.circle(pantalla, ROJO,   (dedo_x, dedo_y), 12)
-        pygame.draw.circle(pantalla, BLANCO, (dedo_x, dedo_y), 12, 2)
+    if estado == "menu":
+        pantalla.fill(CREMA)
+        fuente_menu = pygame.font.SysFont("impact", 90)
+        titulo = fuente_menu.render("FLAPPY BIRD", True, (60, 35, 10))
+        sombra_t = fuente_menu.render("FLAPPY BIRD", True, NEGRO)
+        pantalla.blit(sombra_t, sombra_t.get_rect(center=(ANCHO // 2 + 4, ALTO // 2 - 96)))
+        pantalla.blit(titulo, titulo.get_rect(center=(ANCHO // 2, ALTO // 2 - 100)))
+        if bird_ok:
+            pantalla.blit(bird_mid, bird_mid.get_rect(center=(ANCHO // 2, ALTO // 2 + 10)))
+        fuente_sub = pygame.font.SysFont("comicsansms", 26)
+        subtitulo = fuente_sub.render("Presiona cualquier tecla para comenzar", True, (120, 90, 50))
+        pantalla.blit(subtitulo, subtitulo.get_rect(center=(ANCHO // 2, ALTO // 2 + 90)))
+        control = fuente_sub.render("Movete arriba/abajo para controlar el pajaro", True, (160, 130, 90))
+        pantalla.blit(control, control.get_rect(center=(ANCHO // 2, ALTO // 2 + 130)))
+    elif estado in ("jugando", "game_over"):
+        for pipe in pipes:
+            dibujar_pipe(pantalla, pipe)
+        dibujar_pajarito(pantalla, BIRD_X, int(pajarito_y), pajarito_flap)
+        dibujar_hud(pantalla)
 
-    dibujar_hud(pantalla)
-    dibujar_ayuda(pantalla)
-
-    if estado == RESULTADO and timer_msj > 0:
-        dibujar_mensaje_central(pantalla, mensaje, color_msj)
-
-    if juego_terminado:
-        dibujar_pantalla_final(pantalla)
+    if estado == "game_over":
+        overlay = pygame.Surface((ANCHO, ALTO), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        pantalla.blit(overlay, (0, 0))
+        txt = pygame.font.SysFont("impact", 60).render("GAME OVER", True, (255, 50, 50))
+        pantalla.blit(txt, txt.get_rect(center=(ANCHO // 2, ALTO // 2 - 40)))
+        txt2 = pygame.font.SysFont("comicsansms", 26).render("Presiona R para reiniciar", True, BLANCO)
+        pantalla.blit(txt2, txt2.get_rect(center=(ANCHO // 2, ALTO // 2 + 30)))
 
     pygame.display.flip()
-    reloj.tick(60)
-
-# ===========================================================================
-# CIERRE
-# ===========================================================================
-camara.release()
-hands.close()
-pygame.quit()
-sys.exit()
