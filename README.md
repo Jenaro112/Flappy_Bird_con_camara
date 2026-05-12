@@ -1,4 +1,4 @@
-# ⚽ Penales & Flappy Bird por Voz
+# Flappy Bird con Camara
 
 Proyecto interactivo con cámara para detectar gestos faciales y de manos usando **MediaPipe**. Incluye dos juegos y un detector de gestos.
 
