@@ -4,7 +4,7 @@ Proyecto interactivo con cámara para detectar gestos faciales y de manos usando
 
 ## 📁 Archivos
 
-### `game.py` — Flappy Bird controlado con la nariz
+### `Game.py` — Flappy Bird controlado con la nariz
 Controlás un pájaro moviendo la cabeza arriba/abajo. La cámara es el fondo del juego.
 
 - **Detección**: Face Mesh de MediaPipe (landmark 1 = punta de la nariz)
@@ -45,7 +45,7 @@ Muestra la cámara con detección de rostro y manos en tiempo real. Reconoce dos
 source venv/bin/activate
 
 # 2. Jugar al Flappy Bird
-python game.py
+python Game.py
 
 # 3. Probar detección de gestos
 python prueba_camara.py
@@ -82,7 +82,7 @@ pip install opencv-python mediapipe pygame Pillow numpy
 MediaPipe detecta 468 puntos de referencia en la cara. Cada punto tiene coordenadas `(x, y, z)` normalizadas entre 0 y 1.
 
 Puntos clave usados:
-- **Landmark 1**: punta de la nariz (control del pájaro en game.py)
+- **Landmark 1**: punta de la nariz (control del pájaro en Game.py)
 - **Landmark 13**: boca (detección de Dybala)
 - **Landmark 234**: oreja izquierda
 - **Landmark 454**: oreja derecha
@@ -93,7 +93,7 @@ Cada mano tiene 21 puntos. El punto **8** es la punta del dedo índice. La detec
 - **Topo Gigio**: los dedos índices de ambas manos están a menos de **0.3** de distancia de las orejas
 - **Dybala**: un dedo índice está a menos de **0.25** de distancia de la boca
 
-### Control del pájaro (game.py)
+### Control del pájaro (Game.py)
 ```python
 target_y = nose_y_norm * ALTO        # posición Y de la nariz → coordenada de pantalla
 pajarito_y += (target_y - pajarito_y) * 0.3  # suavizado
@@ -118,7 +118,7 @@ Se guarda en `high_score.json` automáticamente al perder o cerrar el juego.
 
 ## 🖼️ Assets necesarios
 
-### Para `game.py` (en `assets/`)
+### Para `Game.py` (en `assets/`)
 | Archivo | Descripción |
 |---------|-------------|
 | `pipe-green.png` | Textura de tubería |
