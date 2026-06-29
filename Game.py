@@ -472,3 +472,6 @@ while True:
         pantalla.blit(txt2, txt2.get_rect(center=(ANCHO // 2, ALTO // 2 + 30)))
 
     pygame.display.flip()  # Actualiza la ventana
+
+
+## santi puto esto si anda
