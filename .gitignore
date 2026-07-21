@@ -1,0 +1,45 @@
+# ── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# ── Entornos virtuales ─────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ── IDEs y editores ────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# ── macOS ──────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ── Modelos ML (se descargan automáticamente al ejecutar) ──
+models/*.task
+
+# ── Datos de runtime ───────────────────────────────────────
+data/high_score.json
+
+# ── Archivos temporales ────────────────────────────────────
+tempCodeRunnerFile.py
+*.log
+*.tmp
